@@ -67,9 +67,12 @@ int main(int argc, char *argv[])
 
   a.add<string>("in", 'i', "input binary file", true, "");
   a.add<string>("out", 'o', "output data text file", false, "data.txt");
-  a.add<int>("burst", 'b', "burst length", false, 0x400);
+  a.add<unsigned int>("burst", 'b', "burst length", false, 0x400);
   a.add("noeof", '\0', "disable end of file char 0a");
   a.add("tcl", '\0', "generate tcl script");
+  a.add<unsigned int>("offset", '\0', "address offset", false, 0x0);
+  a.add<unsigned int>("hole-begin", '\0', "address hole begin", false, 0x0);
+  a.add<unsigned int>("hole-end", '\0', "address hole end", false, 0x0);
 
   // Run parser.
   // It returns only if command line arguments are valid.
@@ -83,7 +86,21 @@ int main(int argc, char *argv[])
        << "output file: "
        << a.get<string>("out") << endl
        << "data burst length: "
-       << a.get<int>("burst") << endl;
+       << a.get<unsigned int>("burst") << endl;
+  
+  unsigned int offset = a.get<unsigned int>("offset");
+  unsigned int hole_begin = a.get<unsigned int>("hole-begin");
+  unsigned int hole_end = a.get<unsigned int>("hole-end");
+  bool have_hole = false;
+
+  if(offset > 0) {
+    printf("add offset 0x%x to all addresses\n", offset);
+  }
+
+  if(hole_begin < hole_end) {
+    printf("add address hole [0x%x - 0x%x)\n", hole_begin, hole_end);
+    have_hole = true;
+  }
 
   FILE* in_fp = fopen(a.get<string>("in").c_str(), "r");
   if(in_fp == NULL) {
@@ -106,12 +123,12 @@ int main(int argc, char *argv[])
     }
   }
 
-  const int burst_length = a.get<int>("burst");
+  const unsigned int burst_length = a.get<unsigned int>("burst");
 
   fseek(in_fp, 0, SEEK_END);
-  int input_size = ftell(in_fp);
+  unsigned int input_size = ftell(in_fp);
   fseek(in_fp, 0, SEEK_SET);
-  int cur_position = 0;
+  unsigned int cur_position = 0;
   cout << "input size: "
        << input_size << endl;
 
@@ -121,7 +138,6 @@ int main(int argc, char *argv[])
 
   burst_buffer[byte2nchar(burst_length) + 1] = '\0';
   while((input_size - cur_position) >= burst_length) {
-    fprintf(out_fp, "%x\n", cur_position);
     for(int i = 0; i < burst_length; i++){
       char buf = 0;
       fread((char *)&buf, 1, 1, in_fp);
@@ -131,15 +147,20 @@ int main(int argc, char *argv[])
       // printf("---%s---", burst_buffer);
     }
     burst_buffer[byte2nchar(burst_length)] = '\0';
-    fprintf(out_fp, "%s\n", burst_buffer);
-    if(a.exist("tcl")) {
-      write_tcl(tcl_fp, cur_position, burst_buffer);
+    int cmd_addr = cur_position + offset;
+    if(!(have_hole && (hole_begin <= cmd_addr) && (cmd_addr < hole_end))){
+      fprintf(out_fp, "%x\n", cmd_addr);
+      fprintf(out_fp, "%s\n", burst_buffer);
+      if(a.exist("tcl")) {
+        write_tcl(tcl_fp, cmd_addr, burst_buffer);
+      }
     }
     cur_position += burst_length;
   }
 
   // fulfill the last burst
-  fprintf(out_fp, "%x\n", cur_position);
+  int cmd_addr = cur_position + offset;
+  fprintf(out_fp, "%x\n", cmd_addr);
   for(int i = 0; i < byte2nchar(burst_length); i++) {
     burst_buffer[i] = '0';
   }
@@ -158,7 +179,7 @@ int main(int argc, char *argv[])
   burst_buffer[byte2nchar(burst_length)] = '\0';
   fprintf(out_fp, "%s\n", burst_buffer);
   if(a.exist("tcl")) {
-    write_tcl(tcl_fp, cur_position, burst_buffer);
+    write_tcl(tcl_fp, cmd_addr, burst_buffer);
     fclose(tcl_fp);
     printf("tcl script generated\n");
   }
